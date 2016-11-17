@@ -3,6 +3,8 @@ package de.ugoe.cs.smartshark.jobs;
 
 import static org.apache.spark.sql.functions.col;
 
+import java.util.Arrays;
+
 import org.apache.spark.ml.classification.LogisticRegression;
 import org.apache.spark.ml.classification.LogisticRegressionModel;
 import org.apache.spark.ml.feature.VectorAssembler;
@@ -12,6 +14,7 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.DataTypes;
 
 import de.ugoe.cs.smartshark.util.DBUtilFactory;
+import de.ugoe.cs.smartshark.util.DataFrameUtils;
 import de.ugoe.cs.smartshark.util.IDBUtils;
 
 /**
@@ -37,18 +40,12 @@ public class DefectPredictionExample {
                                      col("message").rlike("(?i)fix(e[ds])?|bugs?|defects?|patch"));
 
         commits = commits.selectExpr("_id as commit_id", "bugfix");
-        Dataset<Row> fileState = dbUtils.loadData("file_state")
+        Dataset<Row> fileState = dbUtils.loadDataLogical("file_state", Arrays.asList(Arrays.asList("RID"), Arrays.asList("AbstractionLevel"), Arrays.asList("ProductMetric", "JavaClass")))
             .select(col("commit_id"), col("metrics"), col("file_type"));
         fileState = fileState.join(commits, "commit_id").drop("commit_id");
-        fileState = fileState.filter(col("file_type").like("method"));
-        fileState = fileState.select(col("bugfix"), col("metrics.McCC"), col("metrics.NL"));
-        fileState = fileState.filter(col("McCC").isNotNull());
-        fileState = fileState.filter(col("NL").isNotNull());
+        fileState = fileState.filter(col("file_type").like("class")).drop("file_type");
         fileState = fileState.withColumn("bugfix_double", col("bugfix").cast(DataTypes.DoubleType));
-
-        VectorAssembler va = new VectorAssembler().setInputCols(new String[]
-            { "McCC", "NL" }).setOutputCol("features");
-        fileState = va.transform(fileState);
+        fileState = DataFrameUtils.structToFeatures(fileState, "metrics", "features").drop("metrics");
 
         LogisticRegression lr = new LogisticRegression();
         lr.setLabelCol("bugfix_double");

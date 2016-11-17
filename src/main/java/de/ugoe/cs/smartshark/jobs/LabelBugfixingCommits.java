@@ -3,10 +3,13 @@ package de.ugoe.cs.smartshark.jobs;
 
 import static org.apache.spark.sql.functions.col;
 
+import java.util.Arrays;
+
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 
+import de.ugoe.cs.smartshark.util.AnalysisUtils;
 import de.ugoe.cs.smartshark.util.DBUtilFactory;
 import de.ugoe.cs.smartshark.util.IDBUtils;
 
@@ -27,10 +30,23 @@ public class LabelBugfixingCommits {
 
         // fetch data and add bugfix label to commits
         Dataset<Row> commits = dbUtils.loadData("commit");
+        commits.printSchema();
+        if( args.length>0 ) {
+            AnalysisUtils analysisUtils = new AnalysisUtils(sparkSession);
+            String projectId = analysisUtils.resolveProjectUrl(args[0]);
+            commits.filter(col("projectId").like(projectId));
+        }
         commits = commits.withColumn("bugfix",
                                      col("message").rlike("(?i)fix(e[ds])?|bugs?|defects?|patch"));
+
+        Dataset<Row> events = dbUtils.loadData("event");
         
+        events.printSchema();
+        //events = events.filter(col("commit_id").isNotNull());
+        //commits.join(events, commits.col("_id").equalTo(events.col("commit_id"))).printSchema();
         
+        dbUtils.loadDataLogical("file_state", Arrays.asList(Arrays.asList("ID"), Arrays.asList("ProductMetric", "JavaClass"))).printSchema();
+        dbUtils.loadDataLogical("file_state", Arrays.asList(Arrays.asList("ID"), Arrays.asList("ProductMetric", "PythonClass"))).printSchema();
         // TODO write to correct place
     }
     
