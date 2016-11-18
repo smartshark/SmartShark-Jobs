@@ -3,8 +3,6 @@ package de.ugoe.cs.smartshark.jobs;
 
 import static org.apache.spark.sql.functions.col;
 
-import java.util.Arrays;
-
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -29,8 +27,7 @@ public class LabelBugfixingCommits {
         IDBUtils dbUtils = DBUtilFactory.getDBUtils(sparkSession);
 
         // fetch data and add bugfix label to commits
-        Dataset<Row> commits = dbUtils.loadData("commit");
-        commits.printSchema();
+        Dataset<Row> commits = dbUtils.loadData("commit").select(col("_id"), col("message"));
         if( args.length>0 ) {
             AnalysisUtils analysisUtils = new AnalysisUtils(sparkSession);
             String projectId = analysisUtils.resolveProjectUrl(args[0]);
@@ -39,15 +36,8 @@ public class LabelBugfixingCommits {
         commits = commits.withColumn("bugfix",
                                      col("message").rlike("(?i)fix(e[ds])?|bugs?|defects?|patch"));
 
-        Dataset<Row> events = dbUtils.loadData("event");
-        
-        events.printSchema();
-        //events = events.filter(col("commit_id").isNotNull());
-        //commits.join(events, commits.col("_id").equalTo(events.col("commit_id"))).printSchema();
-        
-        dbUtils.loadDataLogical("file_state", Arrays.asList(Arrays.asList("ID"), Arrays.asList("ProductMetric", "JavaClass"))).printSchema();
-        dbUtils.loadDataLogical("file_state", Arrays.asList(Arrays.asList("ID"), Arrays.asList("ProductMetric", "PythonClass"))).printSchema();
-        // TODO write to correct place
+        // TODO writes to a new collection, as existing documents may overwritten leading to data loss
+        dbUtils.writeData(commits, "commits2");
     }
     
 }
