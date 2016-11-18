@@ -68,14 +68,15 @@ public class LabelBuginducingCommits {
             .and(col("committerDate").gt(col("other_committerDate"))));
         commits = commits.select(col("commitId"), col("other_commitId"), col("other_committerDate"),
                                  col("old_start"), col("old_lines"), col("other_new_start"));
-
+        
         // created grouped commitId-grouped RDD
         JavaPairRDD<String, Iterable<Row>> commitPairsRDD =
             commits.javaRDD().mapToPair(new PairFunction<Row, String, Row>()
         {
                 @Override
                 public Tuple2<String, Row> call(Row row) throws Exception {
-                    String commitId = row.getString(row.fieldIndex("commitId"));
+                    Row commitIdStruct = row.getStruct(row.fieldIndex("commitId"));
+                    String commitId = commitIdStruct.getString(commitIdStruct.fieldIndex("oid"));
                     return new Tuple2<String, Row>(commitId, row);
                 }
             }).groupByKey();
@@ -104,13 +105,14 @@ public class LabelBuginducingCommits {
                             Date currentDate = row.getDate(row.fieldIndex("other_committerDate"));
                             if (latestCommitDate == null) {
                                 latestCommitDate = currentDate;
-                                latestCommitId = row.getString(row.fieldIndex("other_commitId"));
+                                Row latestCommitIdStruct = row.getStruct(row.fieldIndex("other_commitId"));
+                                latestCommitId = latestCommitIdStruct.getString(latestCommitIdStruct.fieldIndex("oid"));
                             }
                             else {
                                 if (latestCommitDate.before(currentDate)) {
                                     latestCommitDate = currentDate;
-                                    latestCommitId =
-                                        row.getString(row.fieldIndex("other_commitId"));
+                                    Row latestCommitIdStruct = row.getStruct(row.fieldIndex("other_commitId"));
+                                    latestCommitId = latestCommitIdStruct.getString(latestCommitIdStruct.fieldIndex("oid"));
                                 }
                             }
                         }
