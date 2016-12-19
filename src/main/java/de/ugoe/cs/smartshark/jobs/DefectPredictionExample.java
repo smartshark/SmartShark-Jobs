@@ -7,7 +7,6 @@ import java.util.Arrays;
 
 import org.apache.spark.ml.classification.LogisticRegression;
 import org.apache.spark.ml.classification.LogisticRegressionModel;
-import org.apache.spark.ml.feature.VectorAssembler;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -40,13 +39,14 @@ public class DefectPredictionExample {
                                      col("message").rlike("(?i)fix(e[ds])?|bugs?|defects?|patch"));
 
         commits = commits.selectExpr("_id as commit_id", "bugfix");
-        Dataset<Row> fileState = dbUtils.loadDataLogical("file_state", Arrays.asList(Arrays.asList("RID"), Arrays.asList("AbstractionLevel"), Arrays.asList("ProductMetric", "JavaClass")))
-            .select(col("commit_id"), col("metrics"), col("file_type"));
+        Dataset<Row> fileState = dbUtils.loadDataLogical("code_entity_state", Arrays.asList(Arrays.asList("RID"), Arrays.asList("AbstractionLevel"), Arrays.asList("ProductMetric", "JavaClass")))
+            .select(col("commit_id"), col("metrics"), col("ce_type"));
         fileState = fileState.join(commits, "commit_id").drop("commit_id");
-        fileState = fileState.filter(col("file_type").like("class")).drop("file_type");
+        fileState = fileState.filter(col("ce_type").like("class")).drop("ce_type");
         fileState = fileState.withColumn("bugfix_double", col("bugfix").cast(DataTypes.DoubleType));
         fileState = DataFrameUtils.structToFeatures(fileState, "metrics", "features").drop("metrics");
 
+        fileState.show();
         LogisticRegression lr = new LogisticRegression();
         lr.setLabelCol("bugfix_double");
         lr.setFeaturesCol("features");
