@@ -17,6 +17,14 @@ import de.ugoe.cs.smartshark.util.DBUtilFactory;
 import de.ugoe.cs.smartshark.util.IDBUtils;
 import scala.Tuple2;
 
+/**
+ * <p>
+ * A Spark job that determines the latest commit on the changed parts of a file and identifies this
+ * as buginducing commit.
+ * </p>
+ * 
+ * @author Steffen Herbold
+ */
 public class LabelBuginducingCommits {
 
     @SuppressWarnings("serial")
@@ -36,46 +44,42 @@ public class LabelBuginducingCommits {
                                      col("message").rlike("(?i)fix(e[ds])?|bugs?|defects?|patch"));
         // TODO other job end
 
-        commits = commits.select(col("_id").alias("commitId"), col("projectId"),
-                                 col("fileActionIds"), col("committerDate"), col("bugfix"));
-        commits = commits.withColumn("fileActionId", explode(col("fileActionIds")));;
-        commits = commits.drop("fileActionIds");
+        commits =
+            commits.select(col("_id").alias("commit_id"), col("committer_date"), col("bugfix"));
 
         // join commits and associated file actions
-        Dataset<Row> fileActions =
-            dbUtils.loadData("file_action").select(col("_id").alias("fileActionId"),
-                                                   col("projectId"), col("fileId"), col("hunkIds"));
-        commits = commits.join(fileActions, "fileActionId");
-        commits = commits.withColumn("hunkId", explode(col("hunkIds")));
-        commits = commits.drop("hunkIds");
+        Dataset<Row> fileActions = dbUtils.loadData("file_action")
+            .select(col("_id").alias("file_action_id"), col("file_id"), col("commit_id"),
+                    col("file_id"));
+        commits = commits.join(fileActions, "commit_id");
 
         // join hunks to commits via file actions
-        Dataset<Row> hunks =
-            dbUtils.loadData("hunk").select(col("_id").alias("hunkId"), col("new_start"),
-                                            col("old_start"), col("old_lines"));
-        commits = commits.join(hunks, "hunkId");
-        commits = commits.drop("allHunkIds");
+        Dataset<Row> hunks = dbUtils.loadData("hunk")
+            .select(col("file_action_id"), col("new_start"), col("old_start"), col("old_lines"));
+        commits = commits.join(hunks, "file_action_id");
 
         // self join commits to have all previous commits on files where bugfixes happened
-        Dataset<Row> commitsCopy = commits.select(col("commitId").alias("other_commitId"),
-                                                  col("fileId").alias("other_fileId"),
-                                                  col("committerDate").alias("other_committerDate"),
+        Dataset<Row> commitsCopy = commits.select(col("commit_id").alias("other_commit_id"),
+                                                  col("file_id").alias("other_file_id"),
+                                                  col("committer_date")
+                                                      .alias("other_committer_date"),
                                                   col("new_start").alias("other_new_start"));
         commits = commits.filter(col("bugfix").like("true"));
-        commits.select(col("commitId"), col("fileId"), col("committerDate"), col("old_start"),
+        commits.select(col("commit_id"), col("file_id"), col("committer_date"), col("old_start"),
                        col("old_lines"));
-        commits = commits.join(commitsCopy, col("fileId").equalTo(col("other_fileId"))
-            .and(col("committerDate").gt(col("other_committerDate"))));
-        commits = commits.select(col("commitId"), col("other_commitId"), col("other_committerDate"),
-                                 col("old_start"), col("old_lines"), col("other_new_start"));
-        
+        commits = commits.join(commitsCopy, col("file_id").equalTo(col("other_file_id"))
+            .and(col("committer_date").gt(col("other_committer_date"))));
+        commits =
+            commits.select(col("commit_id"), col("other_commit_id"), col("other_committer_date"),
+                           col("old_start"), col("old_lines"), col("other_new_start"));
+
         // created grouped commitId-grouped RDD
         JavaPairRDD<String, Iterable<Row>> commitPairsRDD =
             commits.javaRDD().mapToPair(new PairFunction<Row, String, Row>()
         {
                 @Override
                 public Tuple2<String, Row> call(Row row) throws Exception {
-                    Row commitIdStruct = row.getStruct(row.fieldIndex("commitId"));
+                    Row commitIdStruct = row.getStruct(row.fieldIndex("commit_id"));
                     String commitId = commitIdStruct.getString(commitIdStruct.fieldIndex("oid"));
                     return new Tuple2<String, Row>(commitId, row);
                 }
@@ -102,17 +106,21 @@ public class LabelBuginducingCommits {
                         int newLineStart = row.getInt(row.fieldIndex("other_new_start"));
                         if (newLineStart <= lineStart + length) {
                             // change within correct area
-                            Date currentDate = row.getDate(row.fieldIndex("other_committerDate"));
+                            Date currentDate = row.getDate(row.fieldIndex("other_committer_date"));
                             if (latestCommitDate == null) {
                                 latestCommitDate = currentDate;
-                                Row latestCommitIdStruct = row.getStruct(row.fieldIndex("other_commitId"));
-                                latestCommitId = latestCommitIdStruct.getString(latestCommitIdStruct.fieldIndex("oid"));
+                                Row latestCommitIdStruct =
+                                    row.getStruct(row.fieldIndex("other_commit_id"));
+                                latestCommitId = latestCommitIdStruct
+                                    .getString(latestCommitIdStruct.fieldIndex("oid"));
                             }
                             else {
                                 if (latestCommitDate.before(currentDate)) {
                                     latestCommitDate = currentDate;
-                                    Row latestCommitIdStruct = row.getStruct(row.fieldIndex("other_commitId"));
-                                    latestCommitId = latestCommitIdStruct.getString(latestCommitIdStruct.fieldIndex("oid"));
+                                    Row latestCommitIdStruct =
+                                        row.getStruct(row.fieldIndex("other_commit_id"));
+                                    latestCommitId = latestCommitIdStruct
+                                        .getString(latestCommitIdStruct.fieldIndex("oid"));
                                 }
                             }
                         }
@@ -120,9 +128,10 @@ public class LabelBuginducingCommits {
                     return latestCommitId;
                 }
             });
+
         // remove duplicates (one commit may have induced multiple bugfixes
         inducingCommitsRDD = inducingCommitsRDD.distinct();
-        
+        inducingCommitsRDD.count();
         System.out.println((System.currentTimeMillis() - startTime) / 1000);
 
         // TODO write to correct place
