@@ -7,7 +7,6 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 
-import de.ugoe.cs.smartshark.util.AnalysisUtils;
 import de.ugoe.cs.smartshark.util.DBUtilFactory;
 import de.ugoe.cs.smartshark.util.IDBUtils;
 
@@ -27,17 +26,30 @@ public class LabelBugfixingCommits {
         IDBUtils dbUtils = DBUtilFactory.getDBUtils(sparkSession);
 
         // fetch data and add bugfix label to commits
-        Dataset<Row> commits = dbUtils.loadData("commit").select(col("_id"), col("message"));
-        if( args.length>0 ) {
-            AnalysisUtils analysisUtils = new AnalysisUtils(sparkSession);
-            String projectId = analysisUtils.resolveProjectUrl(args[0]);
-            commits.filter(col("projectId").like(projectId));
+        Dataset<Row> commits =
+            dbUtils.loadData("commit").select(col("_id"), col("vcs_system_id"), col("message"));
+
+        // if a project name is defined, apply only to commits of the same project
+        if (args.length > 0) {
+            // fetch project id
+            Dataset<Row> projects = dbUtils.loadData("project").filter(col("name").like(args[0]))
+                .select(col("_id").alias("project_id"));
+
+            // fetch vcs system ids
+            Dataset<Row> vcsSystems = dbUtils.loadData("vcs_system").join(projects, "project_id")
+                .select(col("_id").alias("vcs_id"));
+
+            // filter commits
+            commits = commits
+                .join(vcsSystems, commits.col("vcs_system_id").equalTo(vcsSystems.col("vcs_id")))
+                .select(col("_id"), col("vcs_system_id"), col("message"));
         }
         commits = commits.withColumn("bugfix",
                                      col("message").rlike("(?i)fix(e[ds])?|bugs?|defects?|patch"));
 
-        // TODO writes to a new collection, as existing documents may overwritten leading to data loss
-        dbUtils.writeData(commits, "commits2");
+        // TODO writes to a new collection, as existing documents may overwritten leading to data
+        // loss
+        // dbUtils.writeData(commits, "commits2");
     }
-    
+
 }
